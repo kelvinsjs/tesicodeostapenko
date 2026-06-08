@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Esportazione geodati OSM</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f3f3f3;
+            --panel: #ffffff;
+            --text: #333333;
+            --muted: #8c8c8c;
+            --accent: #5a5a5a;
+            --accent-light: #d7d7d7;
+            --border: #e0e0e0;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Inter", "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+        .map-panel {
+            flex: 0 0 50%;
+            max-width: 800px;
+            min-width: 480px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        #map {
+            width: 100%;
+            height: 600px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        }
+        .map-hint {
+            font-size: 0.9rem;
+            color: var(--muted);
+        }
+        .info-panel {
+            flex: 1;
+            padding: 32px;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+        }
+        .info-panel h1 {
+            font-size: 1.6rem;
+            margin: 0;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px 16px;
+        }
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, #fff, #fafafa);
+        }
+        .meta-label {
+            font-size: 0.75rem;
+            color: var(--muted);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .meta-value {
+            font-size: 1.1rem;
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums;
+        }
+        .area-indicator {
+            margin-top: 8px;
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .downloads {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .download-button {
+            padding: 14px 18px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--accent);
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+        }
+        .download-button:hover:not(:disabled) {
+            background: var(--accent);
+            color: #fff;
+        }
+        .download-button:disabled {
+            cursor: not-allowed;
+            color: var(--muted);
+            background: var(--bg);
+        }
+        .download-button.primary {
+            border-color: #bdbdbd;
+            background: #efefef;
+        }
+        .warning {
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #f0cfcf;
+            background: #fdf4f4;
+            color: #7d4040;
+            font-size: 0.9rem;
+            display: none;
+        }
+        .error-message {
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #f3c1c1;
+            background: #fdf1f1;
+            color: #8b2d2d;
+            font-size: 0.9rem;
+            display: none;
+        }
+        @media (max-width: 1200px) {
+            .layout {
+                flex-direction: column;
+            }
+            .map-panel {
+                max-width: unset;
+                width: 100%;
+                min-width: unset;
+                padding: 16px;
+            }
+            .info-panel {
+                border-left: none;
+                border-top: 1px solid var(--border);
+            }
+            #map {
+                height: 420px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="map-panel">
+            <div id="map"></div>
+            <p class="map-hint">Disegna un rettangolo con lo strumento di selezione per vedere i metadati e scaricare il raster della mappa.</p>
+        </div>
+        <aside class="info-panel">
+            <header>
+                <h1>Esportazione area OSM</h1>
+                <p class="area-indicator">Raster georeferenziato · DPI {{ dpi }} · Scala 1:{{ scale }} · Limite {{ max_area_km2 }} km²</p>
+            </header>
+            <section class="meta-grid">
+                <div class="meta-item">
+                    <span class="meta-label">Nord</span>
+                    <span class="meta-value" id="north">–</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Sud</span>
+                    <span class="meta-value" id="south">–</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Est</span>
+                    <span class="meta-value" id="east">–</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Ovest</span>
+                    <span class="meta-value" id="west">–</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Area</span>
+                    <span class="meta-value" id="area">0.00 km²</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Tile</span>
+                    <span class="meta-value" id="tiles">–</span>
+                </div>
+            </section>
+            <div class="warning" id="areaWarning"></div>
+            <div class="downloads">
+                <button class="download-button" id="ndviBtn" disabled>Genera NDVI</button>
+                <button class="download-button" id="demBtn" disabled>Scarica DEM</button>
+                <button class="download-button" id="twiBtn" disabled>Calcola TWI</button>
+                <button class="download-button primary" id="downloadBtn" disabled>Scarica raster della mappa</button>
+            </div>
+            <div class="error-message" id="errorMessage"></div>
+        </aside>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script>
+        const MAX_AREA = {{ max_area_km2 }};
+        const map = L.map('map').setView([55, 37], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        const drawControl = new L.Control.Draw({
+            draw: {
+                polygon: false,
+                polyline: false,
+                circle: false,
+                marker: false,
+                circlemarker: false,
+                rectangle: {
+                    shapeOptions: {
+                        color: '#8e8e8e',
+                        weight: 2
+                    }
+                }
+            },
+            edit: {
+                featureGroup: drawnItems,
+                edit: true,
+                remove: true
+            }
+        });
+        map.addControl(drawControl);
+
+        let selectedRectangle = null;
+        let currentBounds = null;
+        const downloadBtn = document.getElementById('downloadBtn');
+        const demBtn = document.getElementById('demBtn');
+        const ndviBtn = document.getElementById('ndviBtn');
+        const twiBtn = document.getElementById('twiBtn');
+        const errorMessage = document.getElementById('errorMessage');
+
+        function formatValue(value, suffix = '') {
+            return value === null ? '–' : `${value.toFixed(5)}${suffix}`;
+        }
+
+        function calculateArea(bounds) {
+            const north = bounds.getNorth(), south = bounds.getSouth();
+            const east = bounds.getEast(), west = bounds.getWest();
+            const latDiff = Math.abs(north - south);
+            const lonDiff = Math.abs(east - west);
+            const latKm = latDiff * 111;
+            const avgLat = (north + south) / 2;
+            const lonKm = lonDiff * 111 * Math.cos(avgLat * Math.PI / 180);
+            return latKm * lonKm;
+        }
+
+        async function requestSummary(bounds) {
+            try {
+                const response = await fetch('/check_area', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        north: bounds.getNorth(),
+                        south: bounds.getSouth(),
+                        east: bounds.getEast(),
+                        west: bounds.getWest()
+                    })
+                });
+                if (!response.ok) throw new Error('Impossibile ottenere i parametri dell\'area');
+                return await response.json();
+            } catch (error) {
+                console.warn(error);
+                return null;
+            }
+        }
+
+        async function updateMetadata(bounds) {
+            currentBounds = bounds;
+            document.getElementById('north').textContent = formatValue(bounds.getNorth());
+            document.getElementById('south').textContent = formatValue(bounds.getSouth());
+            document.getElementById('east').textContent = formatValue(bounds.getEast());
+            document.getElementById('west').textContent = formatValue(bounds.getWest());
+
+            const area = calculateArea(bounds);
+            document.getElementById('area').textContent = `${area.toFixed(2)} km²`;
+
+            const summary = await requestSummary(bounds);
+            if (summary) {
+                document.getElementById('tiles').textContent = summary.total_tiles;
+                toggleDownload(summary.valid, summary.max_area);
+            } else {
+                document.getElementById('tiles').textContent = '–';
+                toggleDownload(area <= MAX_AREA, MAX_AREA);
+            }
+        }
+
+        function resetMetadata() {
+            currentBounds = null;
+            ['north', 'south', 'east', 'west', 'tiles'].forEach(id => document.getElementById(id).textContent = '–');
+            document.getElementById('area').textContent = '0.00 km²';
+            toggleDownload(false, MAX_AREA);
+            errorMessage.style.display = 'none';
+            if (ndviBtn) {
+                ndviBtn.disabled = true;
+                ndviBtn.textContent = 'Genera NDVI';
+            }
+            if (twiBtn) {
+                twiBtn.disabled = true;
+                twiBtn.textContent = 'Calcola TWI';
+            }
+        }
+
+        function toggleDownload(isValid, limit) {
+            const warning = document.getElementById('areaWarning');
+            if (isValid) {
+                warning.style.display = 'none';
+                downloadBtn.disabled = false;
+                demBtn.disabled = false;
+                if (ndviBtn) ndviBtn.disabled = false;
+                if (twiBtn) twiBtn.disabled = false;
+            } else {
+                warning.textContent = `L'area supera il limite disponibile di ${limit} km². Riduci la selezione.`;
+                warning.style.display = 'block';
+                downloadBtn.disabled = true;
+                demBtn.disabled = true;
+                if (ndviBtn) ndviBtn.disabled = true;
+                if (twiBtn) twiBtn.disabled = true;
+            }
+        }
+
+        map.on('draw:created', async function (event) {
+            if (selectedRectangle) {
+                drawnItems.removeLayer(selectedRectangle);
+            }
+            selectedRectangle = event.layer;
+            drawnItems.addLayer(selectedRectangle);
+            await updateMetadata(selectedRectangle.getBounds());
+        });
+
+        map.on('draw:edited', async function (event) {
+            event.layers.eachLayer(async layer => {
+                await updateMetadata(layer.getBounds());
+            });
+        });
+
+        map.on('draw:deleted', function () {
+            if (selectedRectangle) {
+                drawnItems.removeLayer(selectedRectangle);
+                selectedRectangle = null;
+            }
+            resetMetadata();
+        });
+
+        downloadBtn.addEventListener('click', async function () {
+            if (!currentBounds) return;
+            const btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Preparazione file…';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch('/download_map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        north: currentBounds.getNorth(),
+                        south: currentBounds.getSouth(),
+                        east: currentBounds.getEast(),
+                        west: currentBounds.getWest()
+                    })
+                });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || 'Impossibile preparare la mappa');
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `map_${Date.now()}.${response.type === 'image/png' ? 'png' : 'tif'}`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                errorMessage.textContent = `Errore: ${error.message}`;
+                errorMessage.style.display = 'block';
+            } finally {
+                btn.disabled = !currentBounds;
+                btn.textContent = 'Scarica raster della mappa';
+            }
+        });
+
+        demBtn.addEventListener('click', async function () {
+            if (!currentBounds) return;
+            const btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Richiesta DEM…';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch('/download_dem', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        north: currentBounds.getNorth(),
+                        south: currentBounds.getSouth(),
+                        east: currentBounds.getEast(),
+                        west: currentBounds.getWest()
+                    })
+                });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || 'Impossibile ottenere il DEM');
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const filename = response.headers.get('X-Filename') || `dem_${Date.now()}.tif`;
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                errorMessage.textContent = `Errore: ${error.message}`;
+                errorMessage.style.display = 'block';
+            } finally {
+                btn.disabled = !currentBounds;
+                btn.textContent = 'Scarica DEM';
+            }
+        });
+
+        ndviBtn.addEventListener('click', async function () {
+            if (!currentBounds) return;
+            const btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Preparazione NDVI…';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch('/download_ndvi', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        north: currentBounds.getNorth(),
+                        south: currentBounds.getSouth(),
+                        east: currentBounds.getEast(),
+                        west: currentBounds.getWest()
+                    })
+                });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || 'Impossibile preparare NDVI');
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const filename = response.headers.get('X-Filename') || `ndvi_${Date.now()}.tif`;
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                errorMessage.textContent = `Errore: ${error.message}`;
+                errorMessage.style.display = 'block';
+            } finally {
+                btn.disabled = !currentBounds;
+                btn.textContent = 'Genera NDVI';
+            }
+        });
+
+        twiBtn.addEventListener('click', async function () {
+            if (!currentBounds) return;
+            const btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Calcolo TWI…';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch('/download_twi', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        north: currentBounds.getNorth(),
+                        south: currentBounds.getSouth(),
+                        east: currentBounds.getEast(),
+                        west: currentBounds.getWest()
+                    })
+                });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || 'Impossibile calcolare TWI');
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const filename = response.headers.get('X-Filename') || `twi_${Date.now()}.tif`;
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                errorMessage.textContent = `Errore: ${error.message}`;
+                errorMessage.style.display = 'block';
+            } finally {
+                btn.disabled = !currentBounds;
+                btn.textContent = 'Calcola TWI';
+            }
+        });
+
+
+        resetMetadata();
+    </script>
+</body>
+</html>
