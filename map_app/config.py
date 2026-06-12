@@ -9,7 +9,10 @@ class Settings:
     dpi: int = 200
     scale: int = 100_000
     tile_size: int = 256
-    user_agent: str = "MapDownloader/1.0 Educational Purpose"
+    user_agent: str = (
+    "MapDownloader/1.0 "
+    "(https://ostapenkotesi2026.it; h.ostapenko@campus.uniurb.it)"
+    )
     dem_api_key: str = os.getenv(
         "OPENTOPOGRAPHY_API_KEY",
         "6323d4f076d989ed5f5074f4df0dd8cb",

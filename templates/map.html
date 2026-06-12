@@ -286,13 +286,27 @@
 
         async function updateMetadata(bounds) {
             currentBounds = bounds;
+            
+            // 1. Стандартное обновление интерфейса
             document.getElementById('north').textContent = formatValue(bounds.getNorth());
             document.getElementById('south').textContent = formatValue(bounds.getSouth());
             document.getElementById('east').textContent = formatValue(bounds.getEast());
             document.getElementById('west').textContent = formatValue(bounds.getWest());
 
             const area = calculateArea(bounds);
-            document.getElementById('area').textContent = `${area.toFixed(2)} km²`;
+            
+            const debugPayload = {
+                north: bounds.getNorth(),
+                south: bounds.getSouth(),
+                east: bounds.getEast(),
+                west: bounds.getWest(),
+                calculated_area_km2: parseFloat(area.toFixed(2))
+            };
+
+
+            console.log("DEBUG:", JSON.stringify(debugPayload, null, 2));
+
+            document.getElementById('area').innerHTML = `<span style="font-size:0.7em; color:#555;">${JSON.stringify(debugPayload).replace(/"/g, '')}</span>`;
 
             const summary = await requestSummary(bounds);
             if (summary) {
